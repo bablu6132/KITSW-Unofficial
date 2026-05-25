@@ -53,7 +53,11 @@ export default function App() {
 
   return (
     <>
-      {showCreate ? <EventCreate /> : <Home onAddEvent={handleAddEvent} />}
+      {showCreate ? (
+        <EventCreate />
+      ) : (
+        <Home onAddEvent={handleAddEvent} isAdmin={isAdmin} />
+      )}
       <AdminVerificationModal
         isOpen={isVerificationOpen}
         onClose={() => setIsVerificationOpen(false)}

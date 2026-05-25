@@ -33,6 +33,43 @@ export async function fetchEvents() {
   return supabase.from('events').select('*')
 }
 
+export async function fetchNotes() {
+  if (!supabase) {
+    return {
+      data: null,
+      error: missingEnvError,
+    }
+  }
+
+  return supabase
+    .from('notes')
+    .select('*')
+    .eq('is_active', true)
+    .order('created_at', { ascending: false })
+}
+
+export async function insertNote(noteData) {
+  if (!supabase) {
+    return {
+      data: null,
+      error: missingEnvError,
+    }
+  }
+
+  return supabase.from('notes').insert([noteData])
+}
+
+export async function setNoteActive(noteId, isActive) {
+  if (!supabase) {
+    return {
+      data: null,
+      error: missingEnvError,
+    }
+  }
+
+  return supabase.from('notes').update({ is_active: isActive }).eq('id', noteId)
+}
+
 export async function getAdminUserByEmail(email) {
   if (!supabase) {
     return { admin: null, error: missingEnvError }

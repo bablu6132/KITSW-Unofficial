@@ -6,38 +6,9 @@ import EventCard from '../components/EventCard'
 import NotesCard from '../components/NotesCard'
 import PeopleCard from '../components/PeopleCard'
 import Sidebar from '../components/Sidebar'
-import { fetchEvents } from '../supabase'
-
-const notes = [
-  {
-    id: 1,
-    title: 'Data Structures Unit 4',
-    subject: 'CSE 3rd Year',
-    meta: 'Stacks, queues, and hashing cheat sheet.',
-    downloads: '1.4k',
-  },
-  {
-    id: 2,
-    title: 'Signals and Systems',
-    subject: 'ECE 2nd Year',
-    meta: 'Laplace transforms and frequency response notes.',
-    downloads: '980',
-  },
-  {
-    id: 3,
-    title: 'Thermodynamics',
-    subject: 'ME 2nd Year',
-    meta: 'Solved numericals and exam prep summaries.',
-    downloads: '760',
-  },
-  {
-    id: 4,
-    title: 'Human Computer Interaction',
-    subject: 'Design Elective',
-    meta: 'UX heuristics, testing templates, and case notes.',
-    downloads: '620',
-  },
-]
+import NoteModal from '../components/NoteModal'
+import Toast from '../components/Toast'
+import { fetchEvents, fetchNotes, insertNote, setNoteActive } from '../supabase'
 
 const people = [
   {
@@ -70,11 +41,16 @@ const contentMotion = {
   exit: { opacity: 0, y: -12, transition: { duration: 0.25 } },
 }
 
-export default function Home({ onAddEvent }) {
+export default function Home({ onAddEvent, isAdmin = false }) {
   const [activeTab, setActiveTab] = useState('events')
   const [events, setEvents] = useState([])
   const [isLoading, setIsLoading] = useState(true)
   const [eventsError, setEventsError] = useState('')
+  const [notes, setNotes] = useState([])
+  const [notesLoading, setNotesLoading] = useState(true)
+  const [notesError, setNotesError] = useState('')
+  const [isNoteModalOpen, setIsNoteModalOpen] = useState(false)
+  const [toast, setToast] = useState(null)
 
   useEffect(() => {
     let isMounted = true
@@ -101,6 +77,40 @@ export default function Home({ onAddEvent }) {
       isMounted = false
     }
   }, [])
+
+  useEffect(() => {
+    let isMounted = true
+
+    const loadNotes = async () => {
+      setNotesLoading(true)
+      const { data, error } = await fetchNotes()
+      if (!isMounted) {
+        return
+      }
+      if (error) {
+        setNotesError(error.message)
+        setNotes([])
+      } else {
+        setNotes((data || []).map(mapNoteRow))
+        setNotesError('')
+      }
+      setNotesLoading(false)
+    }
+
+    loadNotes()
+
+    return () => {
+      isMounted = false
+    }
+  }, [])
+
+  useEffect(() => {
+    if (!toast) {
+      return
+    }
+    const handle = window.setTimeout(() => setToast(null), 3600)
+    return () => window.clearTimeout(handle)
+  }, [toast])
 
   const tabs = useMemo(
     () => [
@@ -131,6 +141,75 @@ export default function Home({ onAddEvent }) {
         title: 'No events yet',
         description: 'Be the first to publish a campus event.',
       }
+
+  const noteEmptyState = notesError
+    ? {
+        title: 'Unable to load notes',
+        description: notesError,
+      }
+    : {
+        title: 'No notes yet',
+        description: 'Be the first to share a note with the campus.',
+      }
+
+  const handleNoteSubmit = async (noteData) => {
+    const { error } = await insertNote(noteData)
+    if (error) {
+      throw error
+    }
+
+    setToast({
+      type: 'success',
+      title: 'Note submitted',
+      message: 'Your note has been added to the KITSW library.',
+    })
+    setIsNoteModalOpen(false)
+    await refreshNotes()
+  }
+
+  const handleHideNote = async (noteId) => {
+    const { error } = await setNoteActive(noteId, false)
+    if (error) {
+      setToast({
+        type: 'error',
+        title: 'Unable to hide note',
+        message: error.message || 'Please try again.',
+      })
+      return
+    }
+
+    setToast({
+      type: 'success',
+      title: 'Note hidden',
+      message: 'The note has been removed from public view.',
+    })
+    await refreshNotes()
+  }
+
+  const handleDownloadNote = async (fileUrl, title) => {
+    try {
+      await downloadNote(fileUrl, title)
+    } catch (error) {
+      setToast({
+        type: 'error',
+        title: 'Download failed',
+        message: error?.message || 'Unable to download this note right now.',
+      })
+    }
+  }
+
+  const refreshNotes = async () => {
+    setNotesLoading(true)
+    const { data, error } = await fetchNotes()
+    if (error) {
+      setNotesError(error.message)
+      setNotes([])
+    } else {
+      setNotes((data || []).map(mapNoteRow))
+      setNotesError('')
+    }
+    setNotesLoading(false)
+  }
 
   return (
     <div className="relative min-h-screen overflow-hidden bg-slate-950 text-white">
@@ -169,17 +248,43 @@ export default function Home({ onAddEvent }) {
                   )}
                 </motion.div>
               ) : activeTab === 'notes' ? (
-                <motion.div
-                  key="notes"
-                  {...contentMotion}
-                  className="grid gap-4 md:grid-cols-2"
-                >
-                  {notes.length ? (
-                    notes.map((note) => <NotesCard key={note.id} {...note} />)
+                <motion.div key="notes" {...contentMotion} className="space-y-4">
+                  <div className="flex flex-wrap items-center justify-between gap-3">
+                    <div>
+                      <p className="text-xs uppercase tracking-[0.2em] text-white/50">
+                        Notes library
+                      </p>
+                      <h2 className="text-2xl font-semibold text-white">
+                        Share and download notes
+                      </h2>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => setIsNoteModalOpen(true)}
+                      className="btn-ghost"
+                    >
+                      Add Note
+                    </button>
+                  </div>
+
+                  {notesLoading ? (
+                    <LoadingGrid />
+                  ) : notes.length ? (
+                    <div className="grid gap-4 md:grid-cols-2">
+                      {notes.map((note) => (
+                        <NotesCard
+                          key={note.id}
+                          {...note}
+                          isAdmin={isAdmin}
+                          onDownload={() => handleDownloadNote(note.fileUrl, note.title)}
+                          onHide={isAdmin ? () => handleHideNote(note.id) : undefined}
+                        />
+                      ))}
+                    </div>
                   ) : (
                     <EmptyState
-                      title="No notes yet"
-                      description="Upload a summary to kickstart the library."
+                      title={noteEmptyState.title}
+                      description={noteEmptyState.description}
                     />
                   )}
                 </motion.div>
@@ -227,6 +332,26 @@ export default function Home({ onAddEvent }) {
           </aside>
         </div>
       </main>
+
+      <NoteModal
+        isOpen={isNoteModalOpen}
+        onClose={() => setIsNoteModalOpen(false)}
+        onSubmit={handleNoteSubmit}
+      />
+
+      <div className="pointer-events-none fixed inset-x-0 bottom-6 z-50 flex justify-center px-4">
+        <AnimatePresence>
+          {toast ? (
+            <Toast
+              key={toast.title}
+              type={toast.type}
+              title={toast.title}
+              message={toast.message}
+              onClose={() => setToast(null)}
+            />
+          ) : null}
+        </AnimatePresence>
+      </div>
     </div>
   )
 }
@@ -266,6 +391,26 @@ function normalizeTechnologies(value) {
       .filter(Boolean)
   }
   return []
+}
+
+function mapNoteRow(row, index) {
+  return {
+    id: row.id ?? `${row.title || 'note'}-${index}`,
+    title: row.title,
+    subject: row.subject,
+    description: row.description,
+    fileUrl: row.file_url,
+    fileType: (row.file_type || 'other').toLowerCase(),
+    eventId: row.event_id ?? null,
+    createdAt: row.created_at,
+  }
+}
+
+function downloadNote(fileUrl) {
+  if (typeof window === 'undefined' || !fileUrl) {
+    throw new Error('Invalid file URL.')
+  }
+  window.open(fileUrl, '_blank', 'noopener,noreferrer')
 }
 
 function FeedTabs({ tabs, activeTab, onChange }) {
